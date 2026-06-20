@@ -3,12 +3,13 @@ import sys
 import json
 import urllib.request
 import urllib.error
+from pypdf import PdfReader
 import streamlit as st
 
 # =========================================================================
 # SECURE BACKEND KEY FALLBACKS & SECRETS MANAGEMENT
 # =========================================================================
-GEMINI_API_KEY = "" # Put your key here
+GEMINI_API_KEY = ""  # Paste your key here or leave empty to use Streamlit Secrets
 NVIDIA_NIM_KEY = ""
 CUSTOM_API_KEY = ""
 
@@ -46,7 +47,7 @@ LANG_DICT = {
         "age_label": "Age Group Profile",
         "btn_find": "Find My Schemes",
         "metrics": ["Database Schemes", "Languages Supported", "States Active", "Access Cost", "Free"],
-        "tabs": ["💬 AI Chat Assistant", "📋 Available Schemes", "📝 How to Apply"],
+        "tabs": ["💬 AI Chat Assistant & Document Analyzer", "📋 Available Schemes", "📝 How to Apply"],
         "quick_prompts_title": "**Quick Prompts:**",
         "prompts": [
             "Best health schemes in Telangana?",
@@ -54,7 +55,7 @@ LANG_DICT = {
             "Education scholarships details?",
             "Schemes available for families?"
         ],
-        "input_placeholder": "Ask about any central or state scheme...",
+        "input_placeholder": "Ask about any scheme or upload a PDF document above to ask questions...",
         "benefit_label": "Benefit",
         "eligibility_label": "Eligibility Criteria",
         "btn_view_steps": "View Application Steps",
@@ -73,7 +74,7 @@ LANG_DICT = {
         "age_label": "आयु समूह प्रोफ़ाइल",
         "btn_find": "मेरी योजनाएं खोजें",
         "metrics": ["डेटाबेस योजनाएं", "समर्थित भाषाएँ", "सक्रिय राज्य", "प्रवेश शुल्क", "मुफ़्त"],
-        "tabs": ["💬 एआई चैट सहायक", "📋 उपलब्ध योजनाएं", "📝 आवेदन कैसे करें"],
+        "tabs": ["💬 एआई चैट सहायक और दस्तावेज़ विश्लेषक", "📋 उपलब्ध योजनाएं", "📝 आवेदन कैसे करें"],
         "quick_prompts_title": "**त्वरित संकेत (Quick Prompts):**",
         "prompts": [
             "तेलंगाना में सबसे अच्छी स्वास्थ्य योजनाएं कौन सी हैं?",
@@ -81,7 +82,7 @@ LANG_DICT = {
             "शिक्षा छात्रवृत्ति का विवरण?",
             "परिवारों के लिए कौन सी योजनाएं उपलब्ध हैं?"
         ],
-        "input_placeholder": "किसी भी केंद्रीय या राज्य योजना के बारे में पूछें...",
+        "input_placeholder": "किसी भी योजना या अपने अपलोड किए गए दस्तावेज़ के बारे में पूछें...",
         "benefit_label": "लाभ",
         "eligibility_label": "पात्रता मापदंड",
         "btn_view_steps": "आवेदन के चरण देखें",
@@ -100,7 +101,7 @@ LANG_DICT = {
         "age_label": "వయస్సు సమూహం",
         "btn_find": "నా పథకాలను కనుగొను",
         "metrics": ["మొత్తం పథకాలు", "అందుబాటులో ఉన్న భాషలు", "కవర్ చేయబడిన రాష్ట్రాలు", "ధర", "ఉచితం"],
-        "tabs": ["💬 AI చాట్ అసిస్టెంట్", "📋 అందుబాటులో ఉన్న పథకాలు", "📝 ఎలా దరఖాస్తు చేయాలి"],
+        "tabs": ["💬 AI చాట్ అసిస్టెంట్ & డాక్యుమెంట్ ఎనలైజర్", "📋 అందుబాటులో ఉన్న పథకాలు", "📝 ఎలా దరఖాస్తు చేయాలి"],
         "quick_prompts_title": "**త్వరిత ప్రశ్నలు:**",
         "prompts": [
             "తెలంగాణలో ఉత్తమ ఆరోగ్య పథకాలు ఏవి?",
@@ -108,7 +109,7 @@ LANG_DICT = {
             "విద్యా స్కాలర్‌షిప్‌ల వివరాలు?",
             "కుటుంబాల కోసం అందుబాటులో ఉన్న పథకాలు ఏవి?"
         ],
-        "input_placeholder": "కేంద్ర లేదా రాష్ట్ర పథకాల గురించి అడగండి...",
+        "input_placeholder": "పథకాల గురించి లేదా మీరు అప్‌లోడ్ చేసిన డాక్యుమెంట్ గురించి అడగండి...",
         "benefit_label": "లభించే ప్రయోజనం",
         "eligibility_label": "అర్హత ప్రమాణాలు",
         "btn_view_steps": "దరఖాస్తు విధానం చూడండి",
@@ -179,21 +180,29 @@ SCHEMES_DB = [
 ]
 
 # =========================================================================
-# HELPER RESPONSIVE TEXT GENERATION WITH NATIVE LANGUAGE ENFORCEMENT
+# HELPER RESPONSIVE TEXT GENERATION WITH ADVANCED PDF INJECTION LOGIC
 # =========================================================================
-def call_gemini_api(prompt_text, context_data, out_lang):
-    if not GEMINI_API_KEY or "YOUR_API_KEY" in GEMINI_API_KEY:
-        return "⚠️ *Please configure your real Gemini API Key inside line 11.*"
+def call_gemini_api(prompt_text, context_data, pdf_text_data, out_lang):
+    if not GEMINI_API_KEY:
+        return "⚠️ *Please configure your real Gemini API Key inside line 12 or Streamlit Secrets.*"
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
     system_instruction = (
         f"You are SAHAY, an expert government scheme assistant. Answer the user query using the "
-        f"provided matching context schemes data accurately. You MUST respond completely in the "
-        f"following language code text script dynamically: {out_lang}. Keep details structured and clear."
+        f"provided matching context schemes data accurately. If custom document raw text content is supplied, "
+        f"use it to extract data, cross-reference rules, or analyze user credentials or income guidelines. "
+        f"You MUST respond completely in the following language code text script dynamically: {out_lang}. "
+        f"Keep details structured and clear."
     )
     
+    full_prompt = f"Context Database Schemes:\n{json.dumps(context_data)}\n\n"
+    if pdf_text_data:
+        full_prompt += f"--- UPLOADED USER DOCUMENT TEXT ---\n{pdf_text_data}\n-----------------------------------\n\n"
+    full_prompt += f"User Question: {prompt_text}"
+    
     body = {
-        "contents": [{"parts": [{"text": f"Context Schemes:\n{json.dumps(context_data)}\n\nUser Question: {prompt_text}"}]}],
+        "contents": [{"parts": [{"text": full_prompt}]}],
         "systemInstruction": {"parts": [{"text": system_instruction}]}
     }
     
@@ -225,7 +234,6 @@ selected_lang = st.sidebar.selectbox(
     label_visibility="collapsed"
 )
 
-# Fetch dynamic strings based on selection
 T = LANG_DICT[selected_lang]
 
 st.sidebar.markdown(f"### {T['filter_title']}")
@@ -260,12 +268,32 @@ st.markdown("---")
 tab_chat, tab_schemes, tab_apply = st.tabs(T["tabs"])
 
 # -------------------------------------------------------------------------
-# TAB 1: AI CHAT ASSISTANT
+# TAB 1: AI CHAT ASSISTANT WITH PDF READER INJECTION
 # -------------------------------------------------------------------------
 with tab_chat:
     st.markdown(f"#### {T['tabs'][0]}")
-    st.markdown(T["quick_prompts_title"])
     
+    # ➕ THE NATIVE PDF ATTACHMENT BOX
+    with st.expander("📁 Attach Reference Documents / PDF Rules / Certificates", expanded=True):
+        uploaded_pdf = st.file_uploader("Upload an income certificate or scheme guidelines PDF", type=["pdf"])
+        
+        pdf_extracted_text = ""
+        if uploaded_pdf is not None:
+            try:
+                # Read text using pypdf reader
+                pdf_reader = PdfReader(uploaded_pdf)
+                pages_text = []
+                for page in pdf_reader.pages:
+                    text_content = page.extract_text()
+                    if text_content:
+                        pages_text.append(text_content)
+                
+                pdf_extracted_text = "\n".join(pages_text)
+                st.success(f"📎 Successfully processed '{uploaded_pdf.name}' ({len(pdf_extracted_text)} characters extracted and added to context!)")
+            except Exception as e:
+                st.error(f"Failed to read PDF file content: {e}")
+
+    st.markdown(T["quick_prompts_title"])
     col_a, col_b, col_c, col_d = st.columns(4)
     p1 = col_a.button(T["prompts"][0], use_container_width=True)
     p2 = col_b.button(T["prompts"][1], use_container_width=True)
@@ -278,6 +306,7 @@ with tab_chat:
     if p3: captured_prompt = T["prompts"][2]
     if p4: captured_prompt = T["prompts"][3]
 
+    # Render running list of past conversation logs
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -291,8 +320,14 @@ with tab_chat:
             st.markdown(final_query)
             
         with st.chat_message("assistant"):
-            with st.spinner("..."):
-                ai_response = call_gemini_api(final_query, st.session_state.matched_schemes, selected_lang)
+            with st.spinner("Analyzing..."):
+                # Pass query, schema db, and any parsed text extracted from your PDF
+                ai_response = call_gemini_api(
+                    final_query, 
+                    st.session_state.matched_schemes, 
+                    pdf_extracted_text, 
+                    selected_lang
+                )
                 st.markdown(ai_response)
                 st.session_state.messages.append({"role": "assistant", "content": ai_response})
 
